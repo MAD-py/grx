@@ -3,7 +3,6 @@ package grx
 import (
 	"bufio"
 	"bytes"
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -20,6 +19,9 @@ const maxRequestSize = 32 << 20 // INFO: 32 MB
 type Server struct {
 	// Configuration for the server.
 	config *config.Server
+
+	// Channel through which the master notifies the shutdown.
+	shutdown chan uint8
 
 	// HTTP client in charge of processing incoming requests .
 	client *http.Client
@@ -38,14 +40,16 @@ type Server struct {
 func (s *Server) forward(conn *net.TCPConn) {
 	defer func() {
 		conn.Close()
+		log.Printf(
+			"%s => Close connection [%s]",
+			s.config.LogName, conn.RemoteAddr().String(),
+		)
 		<-s.connections
-		// log.Println(fmt.Sprintf("%s => Listening for requests", s.config.LogName))
 	}()
 
 	req, err := http.ReadRequest(bufio.NewReaderSize(conn, maxRequestSize))
 	if err != nil {
 		res := proxyHTTP.ErrorToResponse(nil, errors.BadRequest())
-
 		b := bytes.Buffer{}
 		res.IntoForwarded().Write(&b)
 		conn.Write(b.Bytes())
@@ -83,34 +87,53 @@ func (s *Server) forward(conn *net.TCPConn) {
 }
 
 func (s *Server) Run() {
-	log.Println(fmt.Sprintf("%s => Listening for requests", s.config.LogName))
-	// go func() {
+	log.Printf("%s => Listening for requests", s.config.LogName)
+	go func() {
+	Loop:
+		for {
+			// TODO: Manejo de las maximas conexiones
+			// if len(s.connections) == cap(s.connections) {
+			// 	log.Println(
+			// 		fmt.Sprintf(
+			// 			"%s => Reached max connections: %d",
+			// 			s.config.LogName, s.config.MaxConnections,
+			// 		),
+			// 	)
+			// }
+
+			conn, err := s.listener.AcceptTCP()
+			if err != nil {
+				break Loop
+			}
+			s.connections <- 1
+			log.Printf(
+				"%s => Accept new connection [%s]",
+				s.config.LogName, conn.RemoteAddr().String(),
+			)
+			go s.forward(conn)
+		}
+	}()
+
+	<-s.shutdown
+	s.listener.Close()
+	log.Printf("%s => Listening is closed", s.config.LogName)
+	log.Printf(
+		"%s => %d connections waiting to be closed",
+		s.config.LogName, len(s.connections),
+	)
 Loop:
 	for {
-		// TODO: Manejo de las maximas conexiones
-		// if len(s.connections) == cap(s.connections) {
-		// 	log.Println(
-		// 		fmt.Sprintf(
-		// 			"%s => Reached max connections: %d",
-		// 			s.config.LogName, s.config.MaxConnections,
-		// 		),
-		// 	)
-		// }
-
-		conn, err := s.listener.AcceptTCP()
-		if err != nil {
+		if len(s.connections) == 0 {
+			log.Printf(
+				"%s => all client connections have been closed ",
+				s.config.LogName,
+			)
 			break Loop
 		}
-		s.connections <- 1
-		log.Println(fmt.Sprintf("%s => Accept new connection", s.config.LogName))
-		go s.forward(conn)
 	}
-
-	// }()
-
 }
 
-func NewServer(config *config.Server) (*Server, error) {
+func NewServer(config *config.Server, shutdown chan uint8) (*Server, error) {
 	addr, err := net.ResolveTCPAddr("tcp", config.Listen)
 	if err != nil {
 		return nil, err
@@ -142,6 +165,7 @@ func NewServer(config *config.Server) (*Server, error) {
 	connections := make(chan uint8, config.MaxConnections)
 	return &Server{
 		config:      config,
+		shutdown:    shutdown,
 		client:      &client,
 		listener:    listener,
 		pattern:     pattern,
