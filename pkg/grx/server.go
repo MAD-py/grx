@@ -12,6 +12,7 @@ import (
 	"github.com/MAD-py/grx/pkg/config"
 	"github.com/MAD-py/grx/pkg/errors"
 	proxyHTTP "github.com/MAD-py/grx/pkg/http"
+	"github.com/MAD-py/grx/pkg/notification"
 )
 
 const maxRequestSize = 32 << 20 // INFO: 32 MB
@@ -21,7 +22,7 @@ type Server struct {
 	config *config.Server
 
 	// Channel through which the master notifies the shutdown.
-	shutdown chan uint8
+	subscriber *notification.Subscriber
 
 	// HTTP client in charge of processing incoming requests .
 	client *http.Client
@@ -114,26 +115,43 @@ func (s *Server) Run() {
 		}
 	}()
 
-	<-s.shutdown
+	for {
+		switch action := <-s.subscriber.Receiver; action {
+		case notification.Report:
+			s.subscriber.Sender <- notification.ServerState{}
+		case notification.Shutdown:
+			s.shutdown()
+			return
+		}
+	}
+}
+
+func (s *Server) shutdown() {
 	s.listener.Close()
 	log.Printf("%s => Listening is closed", s.config.LogName)
 	log.Printf(
 		"%s => %d connections waiting to be closed",
 		s.config.LogName, len(s.connections),
 	)
-Loop:
 	for {
-		if len(s.connections) == 0 {
-			log.Printf(
-				"%s => all client connections have been closed ",
-				s.config.LogName,
-			)
-			break Loop
+		select {
+		case action := <-s.subscriber.Receiver:
+			if action == notification.Report {
+				s.subscriber.Sender <- notification.ServerState{}
+			}
+		default:
+			if len(s.connections) == 0 {
+				log.Printf(
+					"%s => All client connections have been closed ",
+					s.config.LogName,
+				)
+				return
+			}
 		}
 	}
 }
 
-func NewServer(config *config.Server, shutdown chan uint8) (*Server, error) {
+func NewServer(config *config.Server, subscriber *notification.Subscriber) (*Server, error) {
 	addr, err := net.ResolveTCPAddr("tcp", config.Listen)
 	if err != nil {
 		return nil, err
@@ -165,7 +183,7 @@ func NewServer(config *config.Server, shutdown chan uint8) (*Server, error) {
 	connections := make(chan uint8, config.MaxConnections)
 	return &Server{
 		config:      config,
-		shutdown:    shutdown,
+		subscriber:  subscriber,
 		client:      &client,
 		listener:    listener,
 		pattern:     pattern,
