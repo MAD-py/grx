@@ -3,10 +3,12 @@ package config
 import "time"
 
 type Server struct {
-	ProxyID           string
-	LogName           string
-	Listen            string
-	Pattern           string
+	ID   string
+	Name string
+
+	ListenAddr  string
+	PatternAddr string
+
 	MaxConnections    int
 	TimeoutPerRequest time.Duration
 }

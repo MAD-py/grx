@@ -11,18 +11,18 @@ import (
 
 	"github.com/MAD-py/grx/pkg/config"
 	"github.com/MAD-py/grx/pkg/errors"
+
 	proxyHTTP "github.com/MAD-py/grx/pkg/http"
-	"github.com/MAD-py/grx/pkg/notification"
 )
 
 const maxRequestSize = 32 << 20 // INFO: 32 MB
 
-type Server struct {
+type server struct {
 	// Configuration for the server.
 	config *config.Server
 
-	// Channel through which the master notifies the shutdown.
-	subscriber *notification.Subscriber
+	// Current server status.
+	status serverStatus
 
 	// HTTP client in charge of processing incoming requests .
 	client *http.Client
@@ -35,23 +35,48 @@ type Server struct {
 
 	// Connections are limited and this channel is used as a Semaphore
 	// to prevent overloading.
-	connections chan uint8
+	connections chan struct{}
 }
 
-func (s *Server) forward(conn *net.TCPConn) {
+func (s *server) shutdown() {
+	if s.status == shuttingDown || s.status == offline {
+		return
+	}
+
+	s.listener.Close()
+	s.status = shuttingDown
+	log.Printf("%s => Listening is closed", s.config.Name)
+	log.Printf(
+		"%s => %d connections waiting to be closed",
+		s.config.Name, len(s.connections),
+	)
+
+	for {
+		if len(s.connections) == 0 {
+			log.Printf(
+				"%s => All client connections have been closed ",
+				s.config.Name,
+			)
+			s.status = offline
+			return
+		}
+	}
+}
+
+func (s *server) forward(conn *net.TCPConn) {
 	defer func() {
 		conn.Close()
 		log.Printf(
 			"%s => Close connection [%s]",
-			s.config.LogName, conn.RemoteAddr().String(),
+			s.config.Name, conn.RemoteAddr().String(),
 		)
 		<-s.connections
 	}()
 
+	b := bytes.Buffer{}
 	req, err := http.ReadRequest(bufio.NewReaderSize(conn, maxRequestSize))
 	if err != nil {
 		res := proxyHTTP.ErrorToResponse(nil, errors.BadRequest())
-		b := bytes.Buffer{}
 		res.IntoForwarded().Write(&b)
 		conn.Write(b.Bytes())
 		return
@@ -59,12 +84,12 @@ func (s *Server) forward(conn *net.TCPConn) {
 
 	request := proxyHTTP.NewProxyRquest(
 		req,
-		s.config.ProxyID,
+		s.config.ID,
 		s.pattern,
 		conn.LocalAddr().(*net.TCPAddr),
 		conn.RemoteAddr().(*net.TCPAddr),
 	)
-	res, err := s.client.Do(request.IntoForwarded())
+	res, err := s.client.Do(request.IntoForwarded(true))
 	if err != nil {
 		var proxyErr *errors.ProxyError
 		if urlErr := err.(*url.Error); urlErr.Timeout() {
@@ -73,91 +98,43 @@ func (s *Server) forward(conn *net.TCPConn) {
 			proxyErr = errors.BadGateway()
 		}
 
-		res := proxyHTTP.ErrorToResponse(nil, proxyErr)
-		b := bytes.Buffer{}
+		res := proxyHTTP.ErrorToResponse(req, proxyErr)
 		res.IntoForwarded().Write(&b)
 		conn.Write(b.Bytes())
 		return
 	}
-	defer res.Body.Close()
 
+	defer res.Body.Close()
 	response := proxyHTTP.NewProxyResponse(res)
-	b := bytes.Buffer{}
 	response.IntoForwarded().Write(&b)
 	conn.Write(b.Bytes())
 }
 
-func (s *Server) Run() {
-	log.Printf("%s => Listening for requests", s.config.LogName)
-	go func() {
-	Loop:
-		for {
-			// TODO: Manejo de las maximas conexiones
-			// if len(s.connections) == cap(s.connections) {
-			// 	log.Println(
-			// 		fmt.Sprintf(
-			// 			"%s => Reached max connections: %d",
-			// 			s.config.LogName, s.config.MaxConnections,
-			// 		),
-			// 	)
-			// }
-
-			conn, err := s.listener.AcceptTCP()
-			if err != nil {
-				break Loop
-			}
-			s.connections <- 1
-			log.Printf(
-				"%s => Accept new connection [%s]",
-				s.config.LogName, conn.RemoteAddr().String(),
-			)
-			go s.forward(conn)
-		}
-	}()
-
+func (s *server) run() {
+	log.Printf("%s => Listening for requests", s.config.Name)
+	s.status = online
+Loop:
 	for {
-		switch action := <-s.subscriber.Receiver; action {
-		case notification.Report:
-			s.subscriber.Sender <- notification.ServerState{}
-		case notification.Shutdown:
-			s.shutdown()
-			return
+		conn, err := s.listener.AcceptTCP()
+		if err != nil {
+			break Loop
 		}
+		s.connections <- struct{}{}
+		log.Printf(
+			"%s => Accept new connection [%s]",
+			s.config.Name, conn.RemoteAddr().String(),
+		)
+		go s.forward(conn)
 	}
 }
 
-func (s *Server) shutdown() {
-	s.listener.Close()
-	log.Printf("%s => Listening is closed", s.config.LogName)
-	log.Printf(
-		"%s => %d connections waiting to be closed",
-		s.config.LogName, len(s.connections),
-	)
-	for {
-		select {
-		case action := <-s.subscriber.Receiver:
-			if action == notification.Report {
-				s.subscriber.Sender <- notification.ServerState{}
-			}
-		default:
-			if len(s.connections) == 0 {
-				log.Printf(
-					"%s => All client connections have been closed ",
-					s.config.LogName,
-				)
-				return
-			}
-		}
-	}
-}
-
-func NewServer(config *config.Server, subscriber *notification.Subscriber) (*Server, error) {
-	addr, err := net.ResolveTCPAddr("tcp", config.Listen)
+func newServer(config *config.Server) (*server, error) {
+	addr, err := net.ResolveTCPAddr("tcp", config.ListenAddr)
 	if err != nil {
 		return nil, err
 	}
 
-	pattern, err := net.ResolveTCPAddr("tcp", config.Pattern)
+	pattern, err := net.ResolveTCPAddr("tcp", config.PatternAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -175,16 +152,16 @@ func NewServer(config *config.Server, subscriber *notification.Subscriber) (*Ser
 		MaxIdleConns:        config.MaxConnections,
 		TLSHandshakeTimeout: 10 * time.Second,
 	}
-	client := http.Client{
+	client := &http.Client{
 		Transport: &transport,
 		Timeout:   config.TimeoutPerRequest * time.Second,
 	}
 
-	connections := make(chan uint8, config.MaxConnections)
-	return &Server{
+	connections := make(chan struct{}, config.MaxConnections)
+	return &server{
 		config:      config,
-		subscriber:  subscriber,
-		client:      &client,
+		status:      offline,
+		client:      client,
 		listener:    listener,
 		pattern:     pattern,
 		connections: connections,

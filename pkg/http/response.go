@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/MAD-py/grx/pkg/config"
+	"github.com/MAD-py/grx/pkg"
 	"github.com/MAD-py/grx/pkg/errors"
 )
 
@@ -15,7 +15,7 @@ type ProxyResponse struct {
 }
 
 func (r *ProxyResponse) IntoForwarded() *http.Response {
-	r.response.Header.Set("Server", config.Version())
+	r.response.Header.Set("Server", pkg.Version())
 	return r.response
 }
 
