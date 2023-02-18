@@ -24,25 +24,44 @@ type ProxyRquest struct {
 	forwardingAddr *net.TCPAddr
 }
 
-func (r *ProxyRquest) IntoForwarded() *http.Request {
+func (r *ProxyRquest) IntoForwarded(useForwarded bool) *http.Request {
 	req := r.request.Clone(r.request.Context())
 	req.URL.Host = r.forwardingAddr.String()
 	req.URL.Scheme = "http"
 	req.RequestURI = ""
 
-	by := r.proxyAddr.String()
-	if r.proxyID != "" {
-		by = r.proxyID
+	if useForwarded {
+		by := r.proxyAddr.String()
+		if r.proxyID != "" {
+			by = r.proxyID
+		}
+
+		forwarded := fmt.Sprintf(
+			"for=%s;by=%s;host=%s",
+			r.clientAddr.String(), by, r.request.Host,
+		)
+		if v := req.Header.Get("Forwarded"); v != "" {
+			forwarded = fmt.Sprintf("%s, %s", v, forwarded)
+		}
+		req.Header.Set("Forwarded", forwarded)
+	} else {
+		var forwardedFor string
+		if v := req.Header.Get("X-Forwarded-For"); v != "" {
+			forwardedFor = fmt.Sprintf("%s, %s", v, r.proxyAddr.String())
+		} else {
+			forwardedFor = fmt.Sprintf(
+				"%s, %s", r.clientAddr.String(), r.proxyAddr.String(),
+			)
+		}
+		req.Header.Set("X-Forwarded-For", forwardedFor)
+
+		forwardedHost := r.request.Host
+		if v := req.Header.Get("X-Forwarded-Host"); v != "" {
+			forwardedHost = fmt.Sprintf("%s, %s", v, forwardedHost)
+		}
+		req.Header.Set("X-Forwarded-Host", forwardedHost)
 	}
 
-	forwarded := fmt.Sprintf(
-		"for=%s;by=%s;host=%s",
-		r.clientAddr.String(), by, r.request.Host,
-	)
-	if v := req.Header.Get("Forwarded"); v != "" {
-		forwarded = fmt.Sprintf("%s, %s", v, forwarded)
-	}
-	req.Header.Set("Forwarded", forwarded)
 	return req
 }
 
