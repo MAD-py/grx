@@ -19,24 +19,3 @@ func (s serverStatus) String() string {
 	}
 	return "unknown"
 }
-
-type grxStatus uint8
-
-const (
-	running grxStatus = iota
-	stopped
-	stopping
-	awaitting
-)
-
-func (s grxStatus) String() string {
-	switch s {
-	case running:
-		return "running"
-	case stopped:
-		return "stopped"
-	case stopping:
-		return "stopping"
-	}
-	return "unknown"
-}

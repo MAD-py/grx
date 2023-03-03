@@ -12,3 +12,7 @@ type Server struct {
 	MaxConnections    int
 	TimeoutPerRequest time.Duration
 }
+
+type Config struct {
+	Servers []*Server
+}
