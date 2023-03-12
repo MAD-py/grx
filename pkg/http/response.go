@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"strings"
@@ -19,9 +20,35 @@ func (r *ProxyResponse) IntoForwarded() *http.Response {
 	return r.response
 }
 
+func (r *ProxyResponse) CloseBody() {
+	r.response.Body.Close()
+}
+
 func NewProxyResponse(res *http.Response) *ProxyResponse {
 	return &ProxyResponse{
 		response: res,
+	}
+}
+
+func NewFileProxyResponse(req *http.Request, file []byte) *ProxyResponse {
+	proto := req.Proto
+	protoMajor := req.ProtoMajor
+	protoMinor := req.ProtoMinor
+
+	return &ProxyResponse{
+		response: &http.Response{
+			Status:     http.StatusText(http.StatusOK),
+			StatusCode: http.StatusOK,
+
+			Proto:      proto,
+			ProtoMajor: protoMajor,
+			ProtoMinor: protoMinor,
+
+			Header: http.Header{},
+
+			Body:          io.NopCloser(bytes.NewReader(file)),
+			ContentLength: int64(len(file)),
+		},
 	}
 }
 

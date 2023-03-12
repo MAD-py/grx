@@ -28,9 +28,9 @@ func Load(filePath string) (*Config, error) {
 	return config, nil
 }
 
-func loadServers(serversData interface{}) ([]*Server, error) {
+func loadServers(serversData interface{}) ([]interface{}, error) {
 	if serversData, ok := serversData.([]interface{}); ok {
-		servers := make([]*Server, 0, len(serversData))
+		servers := make([]interface{}, 0, len(serversData))
 		for i, serverData := range serversData {
 			server, err := loadServer(serverData, i)
 			if err != nil {
@@ -43,7 +43,7 @@ func loadServers(serversData interface{}) ([]*Server, error) {
 	return nil, errors.New("no servers configured")
 }
 
-func loadServer(serverData interface{}, index int) (*Server, error) {
+func loadServer(serverData interface{}, index int) (interface{}, error) {
 	if serverData, ok := serverData.(map[string]interface{}); ok {
 		name, err := loadServerName(serverData, index)
 		if err != nil {
@@ -53,6 +53,28 @@ func loadServer(serverData interface{}, index int) (*Server, error) {
 		if err != nil {
 			return nil, err
 		}
+
+		serve, ok, err := loadServerServe(serverData, name)
+		if err != nil {
+			return nil, err
+		}
+
+		if ok {
+			_, maxConnection, err := loadServerConn(serverData, name)
+			if err != nil {
+				return nil, err
+			}
+
+			return &StaticServer{
+				Server: Server{
+					Name:           name,
+					ListenAddr:     listen,
+					MaxConnections: maxConnection,
+				},
+				PathPrefix: serve,
+			}, nil
+		}
+
 		forward, err := loadServerForward(serverData, name)
 		if err != nil {
 			return nil, err
@@ -62,12 +84,14 @@ func loadServer(serverData interface{}, index int) (*Server, error) {
 			return nil, err
 		}
 
-		return &Server{
-			Name:              name,
-			ListenAddr:        listen,
+		return &ForwardServer{
+			Server: Server{
+				Name:           name,
+				ListenAddr:     listen,
+				MaxConnections: maxConnection,
+			},
 			PatternAddr:       forward,
 			TimeoutPerRequest: timeout,
-			MaxConnections:    maxConnection,
 		}, nil
 	}
 	return nil, fmt.Errorf("wrong server %d configuration", index)
@@ -93,6 +117,16 @@ func loadServerListen(serverData map[string]interface{}, name string) (string, e
 	return "", fmt.Errorf("%s must have a listen", name)
 }
 
+func loadServerServe(serverData map[string]interface{}, name string) (string, bool, error) {
+	if serve, ok := serverData["serve"]; ok {
+		if serve, ok := serve.(string); ok {
+			return serve, true, nil
+		}
+		return "", false, fmt.Errorf("serve of %s must be a string", name)
+	}
+	return "", false, nil
+}
+
 func loadServerForward(serverData map[string]interface{}, name string) (string, error) {
 	if forward, ok := serverData["forward"]; ok {
 		if forward, ok := forward.(string); ok {
@@ -100,7 +134,7 @@ func loadServerForward(serverData map[string]interface{}, name string) (string, 
 		}
 		return "", fmt.Errorf("forward of %s must be a string", name)
 	}
-	return "", fmt.Errorf("%s must have a forward", name)
+	return "", fmt.Errorf("%s must have a forward or serve", name)
 }
 
 func loadServerConn(serverData map[string]interface{}, name string) (time.Duration, int, error) {

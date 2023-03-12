@@ -1,4 +1,4 @@
-server:
+servers:
   - name: BackendDS
     listen: 127.0.0.1:8000
     forward: 127.0.0.1:8001
@@ -15,3 +15,8 @@ server:
       timeout: 40 # seconds
       concurrent: 1000
     header: x-forwarded # enum: forwarded or x-forwarded
+  - name: Files
+    listen: 127.0.0.1:8004
+    serve: /home/user/website
+    connection:
+      concurrent: 1000

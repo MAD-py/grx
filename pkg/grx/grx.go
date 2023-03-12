@@ -1,6 +1,7 @@
 package grx
 
 import (
+	"errors"
 	"log"
 	"time"
 
@@ -8,13 +9,13 @@ import (
 )
 
 type grx struct {
-	servers []*server
+	servers []server
 }
 
 func (g *grx) Stop() {
 	log.Printf("Stopping grx...")
 	for _, s := range g.servers {
-		if s.status == online {
+		if s.getStatus() == online {
 			go s.shutdown()
 		}
 	}
@@ -23,7 +24,7 @@ Loop:
 	for {
 		time.Sleep(time.Second * 2)
 		for _, s := range g.servers {
-			if s.status != offline {
+			if s.getStatus() != offline {
 				continue Loop
 			}
 		}
@@ -40,13 +41,24 @@ func (g *grx) Run() {
 }
 
 func New(grxConfig *config.Config) (*grx, error) {
-	servers := make([]*server, len(grxConfig.Servers))
+	servers := make([]server, len(grxConfig.Servers))
 	for i, srv := range grxConfig.Servers {
-		server, err := newServer(srv)
-		if err != nil {
-			return nil, err
+		switch v := srv.(type) {
+		case *config.ForwardServer:
+			server, err := newForwardServer(v)
+			if err != nil {
+				return nil, err
+			}
+			servers[i] = server
+		case *config.StaticServer:
+			server, err := newStaticServer(v)
+			if err != nil {
+				return nil, err
+			}
+			servers[i] = server
+		default:
+			return nil, errors.New("unknown server type")
 		}
-		servers[i] = server
 	}
 	return &grx{servers: servers}, nil
 }

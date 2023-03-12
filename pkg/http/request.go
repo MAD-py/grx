@@ -2,7 +2,6 @@ package http
 
 import (
 	"fmt"
-	"net"
 	"net/http"
 )
 
@@ -11,34 +10,34 @@ type ProxyRquest struct {
 	request *http.Request
 
 	// Proxy id used for the "by" field in the "Forwarded" header,
-	// if the proxy does not have this id, the proxy id will be used.
+	// if the proxy does not have this id, the proxy addres will be used.
 	proxyID string
 
 	// Address of the proxy
-	proxyAddr *net.TCPAddr
+	proxyAddr string
 
 	// Address of the client.
-	clientAddr *net.TCPAddr
+	clientAddr string
 
 	// Address of the service processing this request
-	forwardingAddr *net.TCPAddr
+	forwardingAddr string
 }
 
 func (r *ProxyRquest) IntoForwarded(useForwarded bool) *http.Request {
 	req := r.request.Clone(r.request.Context())
-	req.URL.Host = r.forwardingAddr.String()
+	req.URL.Host = r.forwardingAddr
 	req.URL.Scheme = "http"
 	req.RequestURI = ""
 
 	if useForwarded {
-		by := r.proxyAddr.String()
+		by := r.proxyAddr
 		if r.proxyID != "" {
 			by = r.proxyID
 		}
 
 		forwarded := fmt.Sprintf(
 			"for=%s;by=%s;host=%s",
-			r.clientAddr.String(), by, r.request.Host,
+			r.clientAddr, by, r.request.Host,
 		)
 		if v := req.Header.Get("Forwarded"); v != "" {
 			forwarded = fmt.Sprintf("%s, %s", v, forwarded)
@@ -47,10 +46,10 @@ func (r *ProxyRquest) IntoForwarded(useForwarded bool) *http.Request {
 	} else {
 		var forwardedFor string
 		if v := req.Header.Get("X-Forwarded-For"); v != "" {
-			forwardedFor = fmt.Sprintf("%s, %s", v, r.proxyAddr.String())
+			forwardedFor = fmt.Sprintf("%s, %s", v, r.proxyAddr)
 		} else {
 			forwardedFor = fmt.Sprintf(
-				"%s, %s", r.clientAddr.String(), r.proxyAddr.String(),
+				"%s, %s", r.clientAddr, r.proxyAddr,
 			)
 		}
 		req.Header.Set("X-Forwarded-For", forwardedFor)
@@ -68,7 +67,9 @@ func (r *ProxyRquest) IntoForwarded(useForwarded bool) *http.Request {
 func NewProxyRquest(
 	req *http.Request,
 	proxyID string,
-	forwardingAddr, proxyAddr, clientAddr *net.TCPAddr,
+	forwardingAddr string,
+	proxyAddr string,
+	clientAddr string,
 ) *ProxyRquest {
 	return &ProxyRquest{
 		request:        req,

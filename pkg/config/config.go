@@ -3,16 +3,27 @@ package config
 import "time"
 
 type Server struct {
-	ID   string
-	Name string
+	Name           string
+	ListenAddr     string
+	MaxConnections int
+}
 
-	ListenAddr  string
+type ForwardServer struct {
+	Server
+
+	ID string
+
 	PatternAddr string
 
-	MaxConnections    int
 	TimeoutPerRequest time.Duration
 }
 
+type StaticServer struct {
+	Server
+
+	PathPrefix string
+}
+
 type Config struct {
-	Servers []*Server
+	Servers []interface{}
 }
