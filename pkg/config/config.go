@@ -15,6 +15,8 @@ type ForwardServer struct {
 
 	PatternAddr string
 
+	UseForwarded bool
+
 	TimeoutPerRequest time.Duration
 }
 

@@ -43,6 +43,8 @@ type baseServer struct {
 	connections chan struct{}
 }
 
+func (s *baseServer) getStatus() serverStatus { return s.status }
+
 func (s *baseServer) shutdown() {
 	if s.status == shuttingDown || s.status == offline {
 		return
@@ -59,7 +61,7 @@ func (s *baseServer) shutdown() {
 	for {
 		if len(s.connections) == 0 {
 			log.Printf(
-				"%s => All client connections have been closed ",
+				"%s => All client connections have been closed",
 				s.name,
 			)
 			s.status = offline
@@ -68,18 +70,19 @@ func (s *baseServer) shutdown() {
 	}
 }
 
-func (s *baseServer) getStatus() serverStatus { return s.status }
-
 type forwardServer struct {
 	baseServer
 
-	// Proxy id used for the "by" field in the "Forwarded" header
+	// Proxy id used for the "by" field in the "Forwarded" header.
 	id string
 
-	// HTTP client in charge of processing incoming requests .
+	// Value to select between the two types of available headers
+	useForwarded bool
+
+	// HTTP client in charge of processing incoming requests.
 	client *http.Client
 
-	// Forwarding TCP address
+	// Forwarding TCP address.
 	pattern string
 }
 
@@ -110,7 +113,7 @@ func (s *forwardServer) forward(conn *net.TCPConn) {
 		conn.LocalAddr().String(),
 		conn.RemoteAddr().String(),
 	)
-	res, err := s.client.Do(request.IntoForwarded(true))
+	res, err := s.client.Do(request.IntoForwarded(s.useForwarded))
 	if err != nil {
 		var proxyErr *errors.ProxyError
 		if urlErr := err.(*url.Error); urlErr.Timeout() {
@@ -243,9 +246,10 @@ func newForwardServer(config *config.ForwardServer) (*forwardServer, error) {
 			listener:    listener,
 			connections: make(chan struct{}, config.MaxConnections),
 		},
-		id:      config.ID,
-		client:  client,
-		pattern: config.PatternAddr,
+		id:           config.ID,
+		client:       client,
+		pattern:      config.PatternAddr,
+		useForwarded: config.UseForwarded,
 	}, nil
 }
 

@@ -25,7 +25,6 @@ func main() {
 	}
 
 	proxy.Run()
-
 	sgn := make(chan os.Signal, 1)
 	signal.Notify(sgn, syscall.SIGINT)
 	<-sgn

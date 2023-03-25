@@ -54,17 +54,17 @@ func loadServer(serverData interface{}, index int) (interface{}, error) {
 			return nil, err
 		}
 
+		timeout, maxConnection, err := loadServerConn(serverData, name)
+		if err != nil {
+			return nil, err
+		}
+
 		serve, ok, err := loadServerServe(serverData, name)
 		if err != nil {
 			return nil, err
 		}
 
 		if ok {
-			_, maxConnection, err := loadServerConn(serverData, name)
-			if err != nil {
-				return nil, err
-			}
-
 			return &StaticServer{
 				Server: Server{
 					Name:           name,
@@ -79,7 +79,8 @@ func loadServer(serverData interface{}, index int) (interface{}, error) {
 		if err != nil {
 			return nil, err
 		}
-		timeout, maxConnection, err := loadServerConn(serverData, name)
+
+		useForwarded, id, err := loadServerHeader(serverData, name)
 		if err != nil {
 			return nil, err
 		}
@@ -90,7 +91,9 @@ func loadServer(serverData interface{}, index int) (interface{}, error) {
 				ListenAddr:     listen,
 				MaxConnections: maxConnection,
 			},
+			ID:                id,
 			PatternAddr:       forward,
+			UseForwarded:      useForwarded,
 			TimeoutPerRequest: timeout,
 		}, nil
 	}
@@ -135,6 +138,46 @@ func loadServerForward(serverData map[string]interface{}, name string) (string, 
 		return "", fmt.Errorf("forward of %s must be a string", name)
 	}
 	return "", fmt.Errorf("%s must have a forward or serve", name)
+}
+
+func loadServerHeader(serverData map[string]interface{}, name string) (bool, string, error) {
+	if header, ok := serverData["header"]; ok {
+		if header, ok := header.(string); ok {
+			if header == "forwarded" {
+				return true, "", nil
+			}
+			if header == "x-forwarded" {
+				return false, "", nil
+			}
+			return false, "", fmt.Errorf(
+				"%s server its header value must be forwarded or x-forwarded", name,
+			)
+		}
+		if header, ok := header.(map[string]interface{}); ok {
+			if forwarded, ok := header["forwarded"]; ok {
+				if forwarded, ok := forwarded.(map[string]interface{}); ok {
+					if id, ok := forwarded["id"]; ok {
+						if id, ok := id.(string); ok {
+							return true, id, nil
+						}
+						return false, "", fmt.Errorf(
+							"id field of the forwarded header of %s server must be a string", name,
+						)
+					}
+					return false, "", fmt.Errorf(
+						"forwarded header of the %s server must have the field id", name,
+					)
+				}
+				return false, "", fmt.Errorf(
+					"forwarded header of the %s server must have the field id", name,
+				)
+			}
+			return false, "", fmt.Errorf(
+				"%s server its header value must be forwarded or x-forwarded", name,
+			)
+		}
+	}
+	return true, "", nil
 }
 
 func loadServerConn(serverData map[string]interface{}, name string) (time.Duration, int, error) {
