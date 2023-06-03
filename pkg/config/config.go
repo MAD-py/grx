@@ -26,6 +26,12 @@ type StaticServer struct {
 	PathPrefix string
 }
 
+type Forward struct {
+	Addr string
+
+	Weight uint8
+}
+
 type Config struct {
 	Servers []interface{}
 }
