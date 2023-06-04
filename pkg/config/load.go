@@ -220,7 +220,7 @@ func loadServerHeader(serverData map[string]any, name string) (bool, string, err
 }
 
 func loadServerConn(serverData map[string]any, name string) (time.Duration, int, error) {
-	var timeout time.Duration = 0
+	var timeout time.Duration = 40
 	var maxConnections int = 1000
 
 	if conn, ok := serverData["connection"]; ok {
