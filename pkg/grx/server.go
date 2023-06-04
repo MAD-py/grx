@@ -14,6 +14,7 @@ import (
 
 	"github.com/MAD-py/grx/pkg/config"
 	"github.com/MAD-py/grx/pkg/errors"
+	"github.com/MAD-py/grx/pkg/lb"
 
 	proxyHTTP "github.com/MAD-py/grx/pkg/http"
 )
@@ -82,8 +83,8 @@ type forwardServer struct {
 	// HTTP client in charge of processing incoming requests.
 	client *http.Client
 
-	// Forwarding TCP address.
-	pattern string
+	// Load balancer for forwarding.
+	loadBalancer lb.LoadBalancer
 }
 
 func (s *forwardServer) forward(conn *net.TCPConn) {
@@ -109,7 +110,7 @@ func (s *forwardServer) forward(conn *net.TCPConn) {
 	request := proxyHTTP.NewProxyRquest(
 		req,
 		s.id,
-		s.pattern,
+		s.loadBalancer.GetServer(),
 		conn.LocalAddr().String(),
 		conn.RemoteAddr().String(),
 	)
@@ -215,8 +216,8 @@ Loop:
 	}
 }
 
-func newForwardServer(config *config.ForwardServer) (*forwardServer, error) {
-	addr, err := net.ResolveTCPAddr("tcp", config.ListenAddr)
+func newForwardServer(configServer *config.ForwardServer) (*forwardServer, error) {
+	addr, err := net.ResolveTCPAddr("tcp", configServer.ListenAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -231,25 +232,35 @@ func newForwardServer(config *config.ForwardServer) (*forwardServer, error) {
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).Dial,
-		MaxIdleConns:        config.MaxConnections,
+		MaxIdleConns:        configServer.MaxConnections,
 		TLSHandshakeTimeout: 10 * time.Second,
 	}
 	client := &http.Client{
 		Transport: &transport,
-		Timeout:   config.TimeoutPerRequest * time.Second,
+		Timeout:   configServer.TimeoutPerRequest * time.Second,
+	}
+
+	var loadBalancer lb.LoadBalancer
+	switch configServer.LoadBalancer {
+	case config.Base:
+		loadBalancer = lb.NewBase(configServer.Forward[0])
+	case config.RoundRobin:
+		loadBalancer = lb.NewRoundRobin(configServer.Forward)
+	case config.WeightedRoundRobin:
+		loadBalancer = lb.NewWeightedRoundRobin(configServer.Forward)
 	}
 
 	return &forwardServer{
 		baseServer: baseServer{
-			name:        config.Name,
+			name:        configServer.Name,
 			status:      offline,
 			listener:    listener,
-			connections: make(chan struct{}, config.MaxConnections),
+			connections: make(chan struct{}, configServer.MaxConnections),
 		},
-		id:           config.ID,
+		id:           configServer.ID,
 		client:       client,
-		pattern:      config.PatternAddr,
-		useForwarded: config.UseForwarded,
+		loadBalancer: loadBalancer,
+		useForwarded: configServer.UseForwarded,
 	}, nil
 }
 

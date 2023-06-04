@@ -10,7 +10,20 @@ servers:
         id: toABfqD1egNrS
   - name: Backend
     listen: 127.0.0.1:8002
-    forward: 127.0.0.1:8003
+    forward:
+      - 127.0.0.1:8003
+      - 127.0.0.1:8005
+    connection:
+      timeout: 40 # seconds
+      concurrent: 1000
+    header: x-forwarded # enum: forwarded or x-forwarded
+  - name: Backend 2
+    listen: 127.0.0.1:8008
+    forward:
+      - addres: 127.0.0.1:8006
+        weight: 2
+      - addres: 127.0.0.1:8007
+        weight: 4
     connection:
       timeout: 40 # seconds
       concurrent: 1000

@@ -14,12 +14,12 @@ func main() {
 	filePath := flag.String("file", "grx.yml", "Configuration file path")
 	flag.Parse()
 
-	grxConfig, err := config.Load(*filePath)
+	grxServers, err := config.Load(*filePath)
 	if err != nil {
 		panic(err)
 	}
 
-	proxy, err := grx.New(grxConfig)
+	proxy, err := grx.New(grxServers)
 	if err != nil {
 		panic(err)
 	}

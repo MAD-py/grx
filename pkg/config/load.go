@@ -9,28 +9,27 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func Load(filePath string) (*Config, error) {
+func Load(filePath string) (Servers, error) {
 	data, err := deserialize(filePath)
 	if err != nil {
 		return nil, err
 	}
 
-	config := &Config{}
+	var servers Servers
 	if serversData, ok := data["servers"]; ok {
-		servers, err := loadServers(serversData)
+		servers, err = loadServers(serversData)
 		if err != nil {
 			return nil, err
 		}
-		config.Servers = servers
 	} else {
 		return nil, errors.New("servers section not found")
 	}
-	return config, nil
+	return servers, nil
 }
 
-func loadServers(serversData interface{}) ([]interface{}, error) {
-	if serversData, ok := serversData.([]interface{}); ok {
-		servers := make([]interface{}, 0, len(serversData))
+func loadServers(serversData any) (Servers, error) {
+	if serversData, ok := serversData.([]any); ok {
+		servers := make([]any, 0, len(serversData))
 		for i, serverData := range serversData {
 			server, err := loadServer(serverData, i)
 			if err != nil {
@@ -43,8 +42,8 @@ func loadServers(serversData interface{}) ([]interface{}, error) {
 	return nil, errors.New("no servers configured")
 }
 
-func loadServer(serverData interface{}, index int) (interface{}, error) {
-	if serverData, ok := serverData.(map[string]interface{}); ok {
+func loadServer(serverData any, index int) (any, error) {
+	if serverData, ok := serverData.(map[string]any); ok {
 		name, err := loadServerName(serverData, index)
 		if err != nil {
 			return nil, err
@@ -75,7 +74,7 @@ func loadServer(serverData interface{}, index int) (interface{}, error) {
 			}, nil
 		}
 
-		forward, err := loadServerForward(serverData, name)
+		forward, loadBalancer, err := loadServerForward(serverData, name)
 		if err != nil {
 			return nil, err
 		}
@@ -92,7 +91,8 @@ func loadServer(serverData interface{}, index int) (interface{}, error) {
 				MaxConnections: maxConnection,
 			},
 			ID:                id,
-			PatternAddr:       forward,
+			LoadBalancer:      loadBalancer,
+			Forward:           forward,
 			UseForwarded:      useForwarded,
 			TimeoutPerRequest: timeout,
 		}, nil
@@ -100,7 +100,7 @@ func loadServer(serverData interface{}, index int) (interface{}, error) {
 	return nil, fmt.Errorf("wrong server %d configuration", index)
 }
 
-func loadServerName(serverData map[string]interface{}, index int) (string, error) {
+func loadServerName(serverData map[string]any, index int) (string, error) {
 	if name, ok := serverData["name"]; ok {
 		if name, ok := name.(string); ok {
 			return name, nil
@@ -110,7 +110,7 @@ func loadServerName(serverData map[string]interface{}, index int) (string, error
 	return fmt.Sprintf("server %d", index), nil
 }
 
-func loadServerListen(serverData map[string]interface{}, name string) (string, error) {
+func loadServerListen(serverData map[string]any, name string) (string, error) {
 	if listen, ok := serverData["listen"]; ok {
 		if listen, ok := listen.(string); ok {
 			return listen, nil
@@ -120,7 +120,7 @@ func loadServerListen(serverData map[string]interface{}, name string) (string, e
 	return "", fmt.Errorf("%s must have a listen", name)
 }
 
-func loadServerServe(serverData map[string]interface{}, name string) (string, bool, error) {
+func loadServerServe(serverData map[string]any, name string) (string, bool, error) {
 	if serve, ok := serverData["serve"]; ok {
 		if serve, ok := serve.(string); ok {
 			return serve, true, nil
@@ -130,17 +130,56 @@ func loadServerServe(serverData map[string]interface{}, name string) (string, bo
 	return "", false, nil
 }
 
-func loadServerForward(serverData map[string]interface{}, name string) (string, error) {
+func loadServerForward(serverData map[string]any, name string) ([]*Forward, LoadBalancer, error) {
 	if forward, ok := serverData["forward"]; ok {
-		if forward, ok := forward.(string); ok {
-			return forward, nil
+		if addr, ok := forward.(string); ok {
+			return []*Forward{{Addr: addr}}, Base, nil
 		}
-		return "", fmt.Errorf("forward of %s must be a string", name)
+		if forwards, ok := forward.([]any); ok {
+			return loadServerLoadBalancer(forwards, name)
+		}
+		return nil, non, fmt.Errorf("forward of %s must be a string or array", name)
 	}
-	return "", fmt.Errorf("%s must have a forward or serve", name)
+	return nil, non, fmt.Errorf("%s must have a forward or serve", name)
 }
 
-func loadServerHeader(serverData map[string]interface{}, name string) (bool, string, error) {
+func loadServerLoadBalancer(serverData []any, name string) ([]*Forward, LoadBalancer, error) {
+	if _, ok := serverData[0].(string); ok {
+		forwards := make([]*Forward, len(serverData))
+		for i, forward := range serverData {
+			if addr, ok := forward.(string); ok {
+				forwards[i] = &Forward{Addr: addr}
+			} else {
+				return nil, non, fmt.Errorf("forward %s must be all of the same type", name)
+			}
+		}
+		return forwards, RoundRobin, nil
+	} else if _, ok := serverData[0].(map[string]any); ok {
+		forwards := make([]*Forward, len(serverData))
+		for i, v := range serverData {
+			if f, ok := v.(map[string]any); ok {
+				forward := &Forward{}
+				if addr, ok := f["addres"].(string); ok {
+					forward.Addr = addr
+				} else {
+					return nil, non, fmt.Errorf("the address of forward %s %d must be string", name, i)
+				}
+				if weight, ok := f["weight"].(int); ok {
+					forward.Weight = uint8(weight)
+				} else {
+					return nil, non, fmt.Errorf("the Weight of forward %s %d must be integer", name, i)
+				}
+				forwards[i] = forward
+			} else {
+				return nil, non, fmt.Errorf("forward %s must be all of the same type", name)
+			}
+		}
+		return forwards, WeightedRoundRobin, nil
+	}
+	return nil, non, fmt.Errorf("forward of %s must be a string array or dict array", name)
+}
+
+func loadServerHeader(serverData map[string]any, name string) (bool, string, error) {
 	if header, ok := serverData["header"]; ok {
 		if header, ok := header.(string); ok {
 			if header == "forwarded" {
@@ -153,9 +192,9 @@ func loadServerHeader(serverData map[string]interface{}, name string) (bool, str
 				"%s server its header value must be forwarded or x-forwarded", name,
 			)
 		}
-		if header, ok := header.(map[string]interface{}); ok {
+		if header, ok := header.(map[string]any); ok {
 			if forwarded, ok := header["forwarded"]; ok {
-				if forwarded, ok := forwarded.(map[string]interface{}); ok {
+				if forwarded, ok := forwarded.(map[string]any); ok {
 					if id, ok := forwarded["id"]; ok {
 						if id, ok := id.(string); ok {
 							return true, id, nil
@@ -180,12 +219,12 @@ func loadServerHeader(serverData map[string]interface{}, name string) (bool, str
 	return true, "", nil
 }
 
-func loadServerConn(serverData map[string]interface{}, name string) (time.Duration, int, error) {
+func loadServerConn(serverData map[string]any, name string) (time.Duration, int, error) {
 	var timeout time.Duration = 0
 	var maxConnections int = 1000
 
 	if conn, ok := serverData["connection"]; ok {
-		if conn, ok := conn.(map[string]interface{}); ok {
+		if conn, ok := conn.(map[string]any); ok {
 			if t, ok := conn["timeout"]; ok {
 				if t, ok := t.(int); ok {
 					timeout = time.Duration(t)
@@ -208,13 +247,13 @@ func loadServerConn(serverData map[string]interface{}, name string) (time.Durati
 	return timeout, maxConnections, nil
 }
 
-func deserialize(filePath string) (map[string]interface{}, error) {
+func deserialize(filePath string) (map[string]any, error) {
 	fileData, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, err
 	}
 
-	data := make(map[string]interface{})
+	data := make(map[string]any)
 	err = yaml.Unmarshal(fileData, &data)
 	if err != nil {
 		return nil, err

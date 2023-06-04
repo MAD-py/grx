@@ -25,6 +25,7 @@ func (lb *WeightedRoundRobin) GetServer() string {
 		lb.currentWeight = lb.servers[0].Weight
 	} else if lb.currentWeight == 0 {
 		lb.index++
+		lb.currentWeight = lb.servers[lb.index].Weight
 	}
 	return server.Addr
 }

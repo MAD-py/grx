@@ -13,7 +13,9 @@ type ForwardServer struct {
 
 	ID string
 
-	PatternAddr string
+	LoadBalancer LoadBalancer
+
+	Forward []*Forward
 
 	UseForwarded bool
 
@@ -32,6 +34,25 @@ type Forward struct {
 	Weight uint8
 }
 
-type Config struct {
-	Servers []interface{}
+type Servers []any
+
+type LoadBalancer uint8
+
+const (
+	non LoadBalancer = iota
+	Base
+	RoundRobin
+	WeightedRoundRobin
+)
+
+func (s LoadBalancer) String() string {
+	switch s {
+	case Base:
+		return "Base"
+	case RoundRobin:
+		return "Round Robin"
+	case WeightedRoundRobin:
+		return "Weighted Round Robin"
+	}
+	return "unknown"
 }

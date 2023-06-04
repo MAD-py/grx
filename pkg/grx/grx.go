@@ -40,9 +40,9 @@ func (g *grx) Run() {
 	}
 }
 
-func New(grxConfig *config.Config) (*grx, error) {
-	servers := make([]server, len(grxConfig.Servers))
-	for i, srv := range grxConfig.Servers {
+func New(grxServers config.Servers) (*grx, error) {
+	servers := make([]server, len(grxServers))
+	for i, srv := range grxServers {
 		switch v := srv.(type) {
 		case *config.ForwardServer:
 			server, err := newForwardServer(v)
